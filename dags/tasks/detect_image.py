@@ -1,9 +1,10 @@
 import os
 from pathlib import Path
 
-def detect_image():
-    uploads = Path("uploads")
+def detect_image(**context):
+    dag_run = context["dag_run"]
+    image_path = dag_run.conf.get("image_path")
+    if not image_path:
+        raise ValueError("No image_path provided in dag_run.conf")
 
-    files = list(uploads.glob("*"))
-
-    return "/home/owen/airflow/" + str(files[0]) if files else None
+    return image_path

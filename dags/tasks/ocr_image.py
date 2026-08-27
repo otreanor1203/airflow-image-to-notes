@@ -29,26 +29,27 @@ def load_env_file():
 load_env_file()
 
 
-def build_image_data_url(image_path):
-    mime_type, _ = mimetypes.guess_type(image_path)
+def build_image_data_url(image_result):
+    mime_type, _ = mimetypes.guess_type(image_result)
     if mime_type is None:
         mime_type = "application/octet-stream"
 
-    with open(image_path, "rb") as image_file:
+    with open(image_result, "rb") as image_file:
         encoded_image = base64.b64encode(image_file.read()).decode("utf-8")
 
     return f"data:{mime_type};base64,{encoded_image}"
 
-def ocr_image(image_path, note_context=""):
+def ocr_image(image_result, user_prompt_result, **context):
+    note_context = user_prompt_result["params_input"]["note_context"]
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
         raise ValueError("OPENAI_API_KEY is not set")
 
-    image_data_url = build_image_data_url(image_path)
+    image_data_url = build_image_data_url(image_result)
 
     context_line = f" User-provided context about these notes: {note_context}." if note_context else ""
 
-    print(f"Pinging OpenAI API with image: {image_path}")
+    print(f"Pinging OpenAI API with image: {image_result}")
     payload = {
         "model": "gpt-4o-mini",
         "messages": [

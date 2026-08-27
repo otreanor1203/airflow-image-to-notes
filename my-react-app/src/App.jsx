@@ -1,11 +1,12 @@
 import { useState } from "react";
 
 // Change this to wherever your backend actually listens.
-const UPLOAD_URL = "http://localhost:8000/upload";
+const SUBMIT_URL = "http://localhost:8000/submit";
 
 export default function App() {
   const [file, setFile] = useState(null);
-  const [status, setStatus] = useState("idle");
+  const [noteContext, setNoteContext] = useState("");
+  const [status, setStatus] = useState("idle"); // idle | submitting | success | error
   const [message, setMessage] = useState("");
 
   function handleFileChange(e) {
@@ -15,36 +16,38 @@ export default function App() {
     setMessage("");
   }
 
-  async function handleUpload() {
-    if (!file) return;
+  async function handleSubmit() {
+    if (!file || !noteContext.trim()) return;
 
-    setStatus("uploading");
+    setStatus("submitting");
     setMessage("");
 
     const formData = new FormData();
     formData.append("image", file);
+    formData.append("note_context", noteContext);
 
     try {
-      const res = await fetch(UPLOAD_URL, {
+      const res = await fetch(SUBMIT_URL, {
         method: "POST",
         body: formData,
       });
 
       if (!res.ok) {
-        throw new Error(`Server responded with ${res.status}`);
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `Server responded with ${res.status}`);
       }
 
       setStatus("success");
-      setMessage("Upload succeeded.");
+      setMessage("Image and note submitted — DAG is running.");
     } catch (err) {
       setStatus("error");
-      setMessage(err.message || "Upload failed.");
+      setMessage(err.message || "Submission failed.");
     }
   }
 
   return (
     <div style={{ maxWidth: 480, margin: "40px auto", fontFamily: "sans-serif" }}>
-      <h1>Upload Image</h1>
+      <h1>Photo to Text</h1>
 
       <input type="file" accept="image/*" onChange={handleFileChange} />
 
@@ -59,8 +62,21 @@ export default function App() {
       )}
 
       <div style={{ marginTop: 12 }}>
-        <button onClick={handleUpload} disabled={!file || status === "uploading"}>
-          {status === "uploading" ? "Uploading..." : "Upload"}
+        <textarea
+          value={noteContext}
+          onChange={(e) => setNoteContext(e.target.value)}
+          placeholder="Briefly describe what these notes are about..."
+          rows={4}
+          style={{ width: "100%" }}
+        />
+      </div>
+
+      <div style={{ marginTop: 12 }}>
+        <button
+          onClick={handleSubmit}
+          disabled={!file || !noteContext.trim() || status === "submitting"}
+        >
+          {status === "submitting" ? "Submitting..." : "Submit"}
         </button>
       </div>
 
