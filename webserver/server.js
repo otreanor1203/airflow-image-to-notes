@@ -165,6 +165,9 @@ async function respondToHitlTask(hitlDetail, message) {
 
   const patchUrl = `${AIRFLOW_BASE_URL}/api/v2/dags/${AIRFLOW_DAG_ID}/dagRuns/${dag_run_id}/taskInstances/${task_id}/${map_index}/hitlDetails`;
 
+  console.log("HITL DETAIL:", JSON.stringify(hitlDetail, null, 2));
+
+
   const patchRes = await fetch(patchUrl, {
     method: "PATCH",
     headers: {
