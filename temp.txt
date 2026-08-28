@@ -12,4 +12,4 @@ Task Identity ti_id=01a04978-d89e-707b-87f1-e57fca737831 dag_id=hackathon task_i
 [2026-08-28T17:44:19.890955Z] INFO - ::group::Post Execute
 [2026-08-28T17:44:19.891066Z] INFO - Pausing task as AWAITING_INPUT.
 [2026-08-28T17:44:19.966076Z] INFO - ::endgroup::
-[2026-08-28T17:44:20.898810Z] INFO - ::group::Pre Execute
+Executor LocalExecutor(parallelism=32) reported that the task instance <TaskInstance: hackathon.add_user_prompt manual__2026-08-28T17:58:01.690824+00:00 [queued] ti_id=01a04985-82e5-7549-a485-f3a639ea491a> finished with state success, but the task instance's state attribute is queued. Learn more: https://airflow.apache.org/docs/apache-airflow/stable/troubleshooting.html#task-state-changed-externally
