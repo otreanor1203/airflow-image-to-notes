@@ -40,6 +40,7 @@ def build_image_data_url(image_result):
     return f"data:{mime_type};base64,{encoded_image}"
 
 def ocr_image(image_result, user_prompt_result, **context):
+    print("RAW HITL XCOM:", repr(user_prompt_result))
     note_context = user_prompt_result["params_input"]["note_context"]
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:

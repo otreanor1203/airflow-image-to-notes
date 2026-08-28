@@ -40,5 +40,4 @@ with DAG(
         op_args=[detect.output, user_prompt.output]
     )
 
-detect >> ocr
-user_prompt >> ocr
+detect >> user_prompt >> ocr
