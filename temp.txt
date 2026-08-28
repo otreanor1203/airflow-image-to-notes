@@ -1,83 +1,15 @@
-owen@OwensLaptop:~/airflow/webserver$ npm start
-
-> photo-to-text-server@0.0.1 start
-> node server.js
-
-Server listening on http://localhost:8000
-HITL DETAIL: {
-  "options": [
-    "OK"
-  ],
-  "subject": "Describe the notes",
-  "body": null,
-  "defaults": [
-    "OK"
-  ],
-  "multiple": false,
-  "params": {
-    "note_context": {
-      "value": "",
-      "description": "Briefly describe what these notes are about",
-      "schema": {
-        "type": "string",
-        "title": "Notes Context"
-      },
-      "source": "task"
-    }
-  },
-  "assigned_users": [],
-  "created_at": "2026-08-28T17:44:19.884142Z",
-  "responded_by_user": null,
-  "responded_at": null,
-  "chosen_options": null,
-  "params_input": {},
-  "response_received": false,
-  "task_instance": {
-    "id": "01a04978-d89e-707b-87f1-e57fca737831",
-    "task_id": "add_user_prompt",
-    "dag_id": "hackathon",
-    "dag_run_id": "manual__2026-08-28T17:44:11.656035+00:00",
-    "map_index": -1,
-    "logical_date": null,
-    "run_after": "2026-08-28T17:44:11.656035Z",
-    "start_date": "2026-08-28T17:44:16.826105Z",
-    "end_date": null,
-    "duration": null,
-    "state": "awaiting_input",
-    "try_number": 1,
-    "max_tries": 0,
-    "task_display_name": "add_user_prompt",
-    "dag_display_name": "hackathon",
-    "hostname": "OwensLaptop.localdomain",
-    "unixname": "owen",
-    "pool": "default_pool",
-    "pool_slots": 1,
-    "queue": "default",
-    "priority_weight": 2,
-    "operator": "HITLEntryOperator",
-    "operator_name": "HITLEntryOperator",
-    "queued_when": "2026-08-28T17:44:16.761458Z",
-    "scheduled_when": "2026-08-28T17:44:16.740857Z",
-    "pid": 463227,
-    "executor": null,
-    "executor_config": "{}",
-    "note": null,
-    "rendered_map_index": null,
-    "rendered_fields": {
-      "subject": "Describe the notes",
-      "body": null
-    },
-    "trigger": null,
-    "triggerer_job": null,
-    "dag_version": {
-      "id": "01a0490c-2f9e-77d5-a1d6-10dfcb62be2f",
-      "version_number": 2,
-      "dag_id": "hackathon",
-      "bundle_name": "dags-folder",
-      "bundle_version": null,
-      "created_at": "2026-08-28T15:45:30.526080Z",
-      "dag_display_name": "hackathon",
-      "bundle_url": null
-    }
-  }
-}
+::group::Log message source details
+/home/owen/airflow/logs/dag_id=hackathon/run_id=manual__2026-08-28T17:44:11.656035+00:00/task_id=add_user_prompt/attempt=1.log
+::endgroup::
+[2026-08-28T17:44:16.837212Z] INFO - ::group::Pre Execute
+Task Identity ti_id=01a04978-d89e-707b-87f1-e57fca737831 dag_id=hackathon task_id=add_user_prompt run_id=manual__2026-08-28T17:44:11.656035+00:00 try_number=1 map_index=-1
+[2026-08-28T17:44:19.760979Z] INFO - DAG bundles loaded: dags-folder
+[2026-08-28T17:44:19.761571Z] INFO - Filling up the DagBag from /home/owen/airflow/dags/hackathon.py
+[2026-08-28T17:44:19.787663Z] WARNING - The `airflow.operators.python.PythonOperator` attribute is deprecated. Please use `'airflow.providers.standard.operators.python.PythonOperator'`. category=UserWarning 
+[2026-08-28T17:44:19.788120Z] INFO - Worker startup parse complete bundle_name=dags-folder  bundle_version=null  dag_file=hackathon.py  bundle_prepare_ms=1  dag_file_parse_ms=26 
+[2026-08-28T17:44:19.836695Z] INFO - ::endgroup::
+[2026-08-28T17:44:19.890646Z] INFO - Waiting for response
+[2026-08-28T17:44:19.890955Z] INFO - ::group::Post Execute
+[2026-08-28T17:44:19.891066Z] INFO - Pausing task as AWAITING_INPUT.
+[2026-08-28T17:44:19.966076Z] INFO - ::endgroup::
+[2026-08-28T17:44:20.898810Z] INFO - ::group::Pre Execute
