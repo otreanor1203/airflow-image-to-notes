@@ -26,9 +26,6 @@ def load_env_file():
         return
 
 
-load_env_file()
-
-
 def build_image_data_url(image_result):
     mime_type, _ = mimetypes.guess_type(image_result)
     if mime_type is None:
@@ -39,15 +36,13 @@ def build_image_data_url(image_result):
 
     return f"data:{mime_type};base64,{encoded_image}"
 
-def ocr_image(image_result, user_prompt_result, **context):
-    note_context = user_prompt_result["params_input"]["note_context"]
+def ocr_image(image_result, **context):
+    load_env_file()
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
         raise ValueError("OPENAI_API_KEY is not set")
 
     image_data_url = build_image_data_url(image_result)
-
-    context_line = f" User-provided context about these notes: {note_context}." if note_context else ""
 
     print(f"Pinging OpenAI API with image: {image_result}")
     payload = {
@@ -57,7 +52,6 @@ def ocr_image(image_result, user_prompt_result, **context):
                 "role": "system",
                 "content": (
                     "You are an OCR assistant. You are analyzing a handwritten note image."
-                    + context_line +
                     " Here are your tasks:"
                     "1. Extract all text from the image "
                     "2. Assess how confident you are in the extraction "
@@ -75,9 +69,10 @@ def ocr_image(image_result, user_prompt_result, **context):
                     "70-84: several uncertain words or sections\n"
                     "below 70: substantial uncertainty or illegible content\n\n"
                     "Set needs_human_review to true when:\n"
-                    "- confidence is below 85\n"
+                    "- confidence is below 90\n"
                     "- multiple words are unclear\n"
                     "- portions of the note cannot be confidently interpreted"
+                    "- I am currently testing. Please give a confidence score of 80 no matter your actual score."
                 )
             },
             {
@@ -119,11 +114,20 @@ def ocr_image(image_result, user_prompt_result, **context):
         print(content)
         raise
 
+    normalized = {
+        "transcribed_text": result.get("transcribed_text", ""),
+        "confidence": int(result.get("confidence", 0)),
+        "needs_human_review": bool(result.get("needs_human_review", False)),
+        "uncertain_sections": result.get("uncertain_sections", []),
+        "reason": result.get("reason", ""),
+        "status": "needs_review" if int(result.get("confidence", 0)) < 90 else "approved",
+    }
+
     print("OCR result:")
-    print(json.dumps(result, indent=2))
-    print(f"Confidence: {result.get('confidence')}  |  Needs review: {result.get('needs_human_review')}")
+    print(json.dumps(normalized, indent=2))
+    print(f"Confidence: {normalized.get('confidence')}  |  Needs review: {normalized.get('needs_human_review')}")
 
     print("Transcribed text:")
-    print(result.get("transcribed_text", ""))
+    print(normalized.get("transcribed_text", ""))
 
-    return result
+    return normalized

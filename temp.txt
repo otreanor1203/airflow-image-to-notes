@@ -1,0 +1,15 @@
+::group::Log message source details
+/home/owen/airflow/logs/dag_id=hackathon/run_id=manual__2026-08-28T17:44:11.656035+00:00/task_id=add_user_prompt/attempt=1.log
+::endgroup::
+[2026-08-28T17:44:16.837212Z] INFO - ::group::Pre Execute
+Task Identity ti_id=01a04978-d89e-707b-87f1-e57fca737831 dag_id=hackathon task_id=add_user_prompt run_id=manual__2026-08-28T17:44:11.656035+00:00 try_number=1 map_index=-1
+[2026-08-28T17:44:19.760979Z] INFO - DAG bundles loaded: dags-folder
+[2026-08-28T17:44:19.761571Z] INFO - Filling up the DagBag from /home/owen/airflow/dags/hackathon.py
+[2026-08-28T17:44:19.787663Z] WARNING - The `airflow.operators.python.PythonOperator` attribute is deprecated. Please use `'airflow.providers.standard.operators.python.PythonOperator'`. category=UserWarning 
+[2026-08-28T17:44:19.788120Z] INFO - Worker startup parse complete bundle_name=dags-folder  bundle_version=null  dag_file=hackathon.py  bundle_prepare_ms=1  dag_file_parse_ms=26 
+[2026-08-28T17:44:19.836695Z] INFO - ::endgroup::
+[2026-08-28T17:44:19.890646Z] INFO - Waiting for response
+[2026-08-28T17:44:19.890955Z] INFO - ::group::Post Execute
+[2026-08-28T17:44:19.891066Z] INFO - Pausing task as AWAITING_INPUT.
+[2026-08-28T17:44:19.966076Z] INFO - ::endgroup::
+Executor LocalExecutor(parallelism=32) reported that the task instance <TaskInstance: hackathon.add_user_prompt manual__2026-08-28T17:58:01.690824+00:00 [queued] ti_id=01a04985-82e5-7549-a485-f3a639ea491a> finished with state success, but the task instance's state attribute is queued. Learn more: https://airflow.apache.org/docs/apache-airflow/stable/troubleshooting.html#task-state-changed-externally
