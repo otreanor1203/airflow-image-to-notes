@@ -4,11 +4,16 @@ from datetime import datetime, timedelta
 
 from airflow import DAG
 
-from airflow.operators.python import PythonOperator
+from airflow.operators.python import BranchPythonOperator, PythonOperator
 
-from tasks.detect_image import detect_image
-from tasks.ocr_image import ocr_image
-from tasks.add_user_prompt import add_user_prompt
+try:
+    from tasks.detect_image import detect_image
+    from tasks.ocr_image import ocr_image
+    from tasks.export_notes import export_one, export_txt, export_word, revise_notes, choose_export_format
+except ModuleNotFoundError:  # pragma: no cover
+    from dags.tasks.detect_image import detect_image
+    from dags.tasks.ocr_image import ocr_image
+    from dags.tasks.export_notes import export_one, export_txt, export_word, revise_notes, choose_export_format
 
 
 default_args = {
@@ -32,12 +37,36 @@ with DAG(
         python_callable=detect_image
     )
 
-    user_prompt = add_user_prompt()
-
     ocr = PythonOperator(
         task_id =  "ocr_image",
         python_callable=ocr_image,
-        op_args=[detect.output, user_prompt.output]
+        op_args=[detect.output]
     )
 
-detect >> user_prompt >> ocr
+    revise = PythonOperator(
+        task_id="revise_notes",
+        python_callable=revise_notes,
+    )
+
+    choose_export = BranchPythonOperator(
+        task_id="choose_export_format",
+        python_callable=choose_export_format,
+    )
+
+    export_txt_task = PythonOperator(
+        task_id="export_txt",
+        python_callable=export_txt,
+    )
+
+    export_word_task = PythonOperator(
+        task_id="export_word",
+        python_callable=export_word,
+    )
+
+    export_one_task = PythonOperator(
+        task_id="export_one",
+        python_callable=export_one,
+    )
+
+detect >> ocr >> revise >> choose_export
+choose_export >> [export_txt_task, export_word_task, export_one_task]
