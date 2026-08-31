@@ -15,7 +15,9 @@ export default function App() {
   const [showGptPrompt, setShowGptPrompt] = useState(false);
   const [gptPrompt, setGptPrompt] = useState("");
   const [gptLoading, setGptLoading] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
   const [finalNotes, setFinalNotes] = useState("");
+  const [hasSubmitted, setHasSubmitted] = useState(false);
 
   async function downloadNotes(fileType) {
     const content = finalNotes || savedOcrText || reviewText || "";
@@ -30,17 +32,26 @@ export default function App() {
         throw new Error("No DAG run is available to generate the file.");
       }
 
-      const response = await fetch(`http://localhost:8000/download/${dagRunId}/${fileType}`);
+      const response = await fetch(
+        `http://localhost:8000/download/${dagRunId}/${fileType}`,
+      );
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
-        throw new Error(body.error || `Server responded with ${response.status}`);
+        throw new Error(
+          body.error || `Server responded with ${response.status}`,
+        );
       }
 
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      const normalized = fileType === "word" ? "notes.doc" : fileType === "one" ? "notes.one" : "notes.txt";
+      const normalized =
+        fileType === "word"
+          ? "notes.doc"
+          : fileType === "one"
+            ? "notes.one"
+            : "notes.txt";
       link.download = normalized;
       document.body.appendChild(link);
       link.click();
@@ -87,7 +98,9 @@ export default function App() {
 
         if (data.status === "needs_review") {
           setStatus("success");
-          setMessage("OCR result returned. Please review and fix the text below.");
+          setMessage(
+            "OCR result returned. Please review and fix the text below.",
+          );
           setReviewText(data.result.transcribed_text || "");
           setNeedsReview(true);
           return;
@@ -107,7 +120,9 @@ export default function App() {
   }
 
   async function handleSubmit() {
-    if (!file) return;
+    if (!file || hasSubmitted) return;
+
+    setHasSubmitted(true);
 
     setStatus("submitting");
     setMessage("");
@@ -178,27 +193,15 @@ export default function App() {
   }
 
   async function handleEnhanceWithGpt() {
-    if (!savedOcrText.trim() || !gptPrompt.trim()) return;
+    if (!savedOcrText.trim() || !gptPrompt.trim() || isProcessing) return;
 
+    setIsProcessing(true);
     setGptLoading(true);
     setMessage("");
 
+    setNeedsReview(false);
     setShowOptions(false);
     setShowGptPrompt(false);
-
-    const continueRes = await fetch(`http://localhost:8000/continue/${dagRunId}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      enhance: true,
-      prompt: gptPrompt,
-    }),
-  });
-
-  if (!continueRes.ok) {
-    const body = await continueRes.json().catch(() => ({}));
-    throw new Error(body.error || `Server responded with ${continueRes.status}`);
-  }
 
     try {
       const res = await fetch("http://localhost:8000/enhance", {
@@ -225,41 +228,46 @@ export default function App() {
       setMessage(err.message || "GPT enhancement failed.");
     } finally {
       setGptLoading(false);
+      setIsProcessing(false);
     }
   }
 
-async function continueToNextStep() {
-  try {
-    const res = await fetch(`http://localhost:8000/continue/${dagRunId}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        enhance: false,
-        prompt: "",
-      }),
-    });
+  async function continueToNextStep() {
+    try {
+      const res = await fetch(`http://localhost:8000/continue/${dagRunId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          enhance: false,
+          prompt: "",
+        }),
+      });
 
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      throw new Error(body.error || `Server responded with ${res.status}`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `Server responded with ${res.status}`);
+      }
+
+      setShowOptions(false);
+      setShowGptPrompt(false);
+      setFinalNotes(savedOcrText);
+      setStatus("success");
+      setMessage("Choose a file type to download your notes.");
+    } catch (err) {
+      setStatus("error");
+      setMessage(err.message || "Failed to continue.");
     }
-
-    setShowOptions(false);
-    setShowGptPrompt(false);
-    setFinalNotes(savedOcrText);
-    setStatus("success");
-    setMessage("Choose a file type to download your notes.");
-  } catch (err) {
-    setStatus("error");
-    setMessage(err.message || "Failed to continue.");
   }
-}
 
   return (
-    <div style={{ maxWidth: 520, margin: "40px auto", fontFamily: "sans-serif" }}>
+    <div
+      style={{ maxWidth: 520, margin: "40px auto", fontFamily: "sans-serif" }}
+    >
       <h1>Image Upload</h1>
 
-      <input type="file" accept="image/*" onChange={handleFileChange} />
+      {!hasSubmitted && (
+        <input type="file" accept="image/*" onChange={handleFileChange} />
+      )}
 
       {file && (
         <div style={{ marginTop: 12 }}>
@@ -272,8 +280,8 @@ async function continueToNextStep() {
       )}
 
       <div style={{ marginTop: 12 }}>
-        <button onClick={handleSubmit} disabled={!file || status === "submitting"}>
-          {status === "submitting" ? "Submitting..." : "Submit"}
+        <button onClick={handleSubmit} disabled={!file || hasSubmitted}>
+          {hasSubmitted ? "Submitted" : "Submit"}
         </button>
       </div>
 
@@ -289,14 +297,18 @@ async function continueToNextStep() {
             style={{ width: "100%", boxSizing: "border-box" }}
           />
           <div style={{ marginTop: 10 }}>
-            <button onClick={saveOcrText} disabled={reviewSaving || !reviewText.trim()}>
+            <button
+              onClick={saveOcrText}
+              disabled={reviewSaving || !reviewText.trim() || isProcessing}
+            >
               {reviewSaving ? "Saving..." : "Save final OCR result"}
             </button>
           </div>
         </div>
       )}
 
-{reviewText && !needsReview && !showOptions && !finalNotes && (        <div style={{ marginTop: 20 }}>
+      {reviewText && !needsReview && !showOptions && !finalNotes && (
+        <div style={{ marginTop: 20 }}>
           <h3>OCR result</h3>
           <textarea
             value={reviewText}
@@ -305,7 +317,10 @@ async function continueToNextStep() {
             style={{ width: "100%", boxSizing: "border-box" }}
           />
           <div style={{ marginTop: 10 }}>
-            <button onClick={saveOcrText} disabled={reviewSaving || !reviewText.trim()}>
+            <button
+              onClick={saveOcrText}
+              disabled={reviewSaving || !reviewText.trim() || isProcessing}
+            >
               {reviewSaving ? "Saving..." : "Save final OCR result"}
             </button>
           </div>
@@ -316,8 +331,15 @@ async function continueToNextStep() {
         <div style={{ marginTop: 20 }}>
           <h3>What next?</h3>
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-            <button onClick={() => setShowGptPrompt(true)}>Send to GPT</button>
-            <button onClick={continueToNextStep}>Move on to next step</button>
+            <button
+              onClick={() => setShowGptPrompt(true)}
+              disabled={isProcessing}
+            >
+              Send to GPT
+            </button>
+            <button onClick={continueToNextStep} disabled={isProcessing}>
+              Move on to next step
+            </button>
           </div>
         </div>
       )}
@@ -330,12 +352,14 @@ async function continueToNextStep() {
           <textarea
             value={gptPrompt}
             onChange={(e) => setGptPrompt(e.target.value)}
+            disabled={isProcessing}
             rows={5}
-            placeholder="Examples: rewrite as polished meeting notes, fix grammar, summarize into action items..."
-            style={{ width: "100%", boxSizing: "border-box" }}
           />
           <div style={{ marginTop: 10 }}>
-            <button onClick={handleEnhanceWithGpt} disabled={gptLoading || !gptPrompt.trim()}>
+            <button
+              onClick={handleEnhanceWithGpt}
+              disabled={gptLoading || !gptPrompt.trim() || isProcessing}
+            >
               {gptLoading ? "Enhancing..." : "Enhance my notes"}
             </button>
           </div>
@@ -345,22 +369,47 @@ async function continueToNextStep() {
       {finalNotes && (
         <div style={{ marginTop: 20 }}>
           <h3>Final notes</h3>
-          <pre style={{ whiteSpace: "pre-wrap", background: "#f5f5f5", padding: 12 }}>
+          <pre
+            style={{
+              whiteSpace: "pre-wrap",
+              background: "#f5f5f5",
+              padding: 12,
+            }}
+          >
             {finalNotes}
           </pre>
 
           <div style={{ marginTop: 16 }}>
             <h4>Download as</h4>
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-              <button onClick={() => downloadNotes("txt")}>TXT</button>
-              <button onClick={() => downloadNotes("word")}>Word</button>
-              <button onClick={() => downloadNotes("one")}>OneNote</button>
+              <button
+                onClick={() => downloadNotes("txt")}
+                disabled={isProcessing}
+              >
+                TXT
+              </button>
+              <button
+                onClick={() => downloadNotes("word")}
+                disabled={isProcessing}
+              >
+                Word
+              </button>
+              <button
+                onClick={() => downloadNotes("one")}
+                disabled={isProcessing}
+              >
+                OneNote
+              </button>
             </div>
           </div>
         </div>
       )}
       {message && (
-        <p style={{ color: status === "error" ? "red" : "green", marginTop: 16 }}>{message}</p>
+        <p
+          style={{ color: status === "error" ? "red" : "green", marginTop: 16 }}
+        >
+          {message}
+        </p>
       )}
     </div>
   );
