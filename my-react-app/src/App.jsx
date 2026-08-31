@@ -16,6 +16,7 @@ export default function App() {
   const [gptPrompt, setGptPrompt] = useState("");
   const [gptLoading, setGptLoading] = useState(false);
   const [finalNotes, setFinalNotes] = useState("");
+  const [showDownloadOptions, setShowDownloadOptions] = useState(false);
 
   async function downloadNotes(fileType) {
     const content = finalNotes || savedOcrText || reviewText || "";
@@ -68,6 +69,7 @@ export default function App() {
     setShowGptPrompt(false);
     setGptPrompt("");
     setFinalNotes("");
+    setShowDownloadOptions(false);
   }
 
   async function pollForResult(runId) {
@@ -117,6 +119,7 @@ export default function App() {
     setShowOptions(false);
     setShowGptPrompt(false);
     setFinalNotes("");
+    setShowDownloadOptions(false);
 
     const formData = new FormData();
     formData.append("image", file);
@@ -211,12 +214,13 @@ export default function App() {
     }
   }
 
-  function continueToNextStep() {
-    setShowOptions(false);
-    setShowGptPrompt(false);
-    setStatus("success");
-    setMessage("Ready for the next step.");
-  }
+function continueToNextStep() {
+  setShowOptions(false);
+  setShowGptPrompt(false);
+  setShowDownloadOptions(true);
+  setStatus("success");
+  setMessage("Choose a file type to download your notes.");
+}
 
   return (
     <div style={{ maxWidth: 520, margin: "40px auto", fontFamily: "sans-serif" }}>
@@ -259,8 +263,7 @@ export default function App() {
         </div>
       )}
 
-      {reviewText && !needsReview && !showOptions && !finalNotes && (
-        <div style={{ marginTop: 20 }}>
+{reviewText && !needsReview && !showOptions && !showDownloadOptions && !finalNotes && (        <div style={{ marginTop: 20 }}>
           <h3>OCR result</h3>
           <textarea
             value={reviewText}
@@ -326,7 +329,27 @@ export default function App() {
             <button onClick={continueToNextStep}>Ready for next step</button>
           </div>
         </div>
-      )}
+      )}{showDownloadOptions && (
+  <div style={{ marginTop: 20 }}>
+    <h3>Download your notes</h3>
+    <p>Select the file type you want:</p>
+
+    <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+      <button onClick={() => downloadNotes("txt")}>
+        TXT
+      </button>
+
+      <button onClick={() => downloadNotes("word")}>
+        Word
+      </button>
+
+      <button onClick={() => downloadNotes("one")}>
+        OneNote
+      </button>
+    </div>
+  </div>
+)}
+
 
       {message && (
         <p style={{ color: status === "error" ? "red" : "green", marginTop: 16 }}>{message}</p>
