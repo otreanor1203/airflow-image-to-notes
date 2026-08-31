@@ -364,3 +364,6 @@ vite.config.ts.timestamp-*
 
 # Images
 uploads/
+
+# Decisions
+user_decisions/
