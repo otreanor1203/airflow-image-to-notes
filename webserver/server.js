@@ -102,6 +102,69 @@ app.post("/review/:dagRunId", async (req, res) => {
     result: updatedResult,
   });
 });
+app.post("/continue/:dagRunId", async (req, res) => {
+  const { dagRunId } = req.params;
+  const { enhance, prompt } = req.body || {};
+
+  if (typeof enhance !== "boolean") {
+    return res.status(400).json({
+      error: "enhance must be true or false.",
+    });
+  }
+
+  try {
+    const cached = OCR_REVIEW_CACHE.get(dagRunId);
+
+    if (!cached || !cached.transcribed_text) {
+      return res.status(400).json({
+        error: "No reviewed notes were found for this DAG run.",
+      });
+    }
+
+    const decisionDir =
+      process.env.AIRFLOW_DECISION_DIR ||
+      "/home/owen/airflow/user_decisions";
+
+    fs.mkdirSync(decisionDir, {
+      recursive: true,
+    });
+
+    const decisionPath = path.join(
+      decisionDir,
+      `${dagRunId}.json`
+    );
+
+    const decision = {
+      dag_run_id: dagRunId,
+      enhance,
+      prompt: prompt || "",
+      notes: cached.transcribed_text,
+      created_at: new Date().toISOString(),
+    };
+
+    fs.writeFileSync(
+      decisionPath,
+      JSON.stringify(decision, null, 2),
+      "utf8"
+    );
+
+    return res.status(200).json({
+      status: "choice_saved",
+      dag_run_id: dagRunId,
+      enhance,
+    });
+  } catch (err) {
+    console.error(
+      "Failed to save enhancement choice:",
+      err
+    );
+
+    return res.status(500).json({
+      error: "Failed to save enhancement choice.",
+      details: err.message,
+    });
+  }
+});
 
 app.post("/enhance", async (req, res) => {
   const { notes, prompt } = req.body || {};
@@ -183,7 +246,7 @@ app.get("/download/:dagRunId/:fileType", async (req, res) => {
     if (!dagRunResponse.ok) {
       throw new Error(`Could not find DAG run ${dagRunId}`);
     }
-    
+
     const finalText = await getFinalTextForDagRun(dagRunId);
 
     if (!finalText) {
