@@ -6,15 +6,18 @@ from airflow import DAG
 
 from airflow.operators.python import BranchPythonOperator, PythonOperator
 
+from airflow.utils.trigger_rule import TriggerRule
+
 try:
     from tasks.detect_image import detect_image
     from tasks.ocr_image import ocr_image
-    from tasks.export_notes import export_one, export_txt, export_word, revise_notes, choose_export_format
+    from tasks.revise_notes import revise_notes
+    from tasks.export_notes import export_one, export_txt, export_word, choose_export_format
 except ModuleNotFoundError:  # pragma: no cover
     from dags.tasks.detect_image import detect_image
     from dags.tasks.ocr_image import ocr_image
-    from dags.tasks.export_notes import export_one, export_txt, export_word, revise_notes, choose_export_format
-
+    from dags.tasks.revise_notes import revise_notes
+    from dags.tasks.export_notes import export_one, export_txt, export_word, choose_export_format
 
 default_args = {
     'owner' : 'owentreanor',
@@ -51,6 +54,7 @@ with DAG(
     choose_export = BranchPythonOperator(
         task_id="choose_export_format",
         python_callable=choose_export_format,
+        trigger_rule=TriggerRule.NONE_FAILED_MIN_ONE_SUCCESS,
     )
 
     export_txt_task = PythonOperator(

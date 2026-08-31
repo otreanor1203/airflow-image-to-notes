@@ -1,6 +1,9 @@
 This is a test for
 OpenAI image recognition
 Notes:
-- OpenAI is a company that specializes in A I models. They created ChatGPT.
-- The Astronomer Hackathon must be submitted by September 24th.
-- I will be discussing .NET and Grafana with William Sharpe today.
+- OpenAI is a company that specializes
+in AI models. They created ChatGPT.
+- The Astronomer Hackathon must be
+submitted by September 24th.
+- I will be discussing .NET and Grafana
+with William Sharpe today

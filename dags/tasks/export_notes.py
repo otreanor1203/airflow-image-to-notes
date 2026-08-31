@@ -4,29 +4,6 @@ import zipfile
 from pathlib import Path
 
 
-def revise_notes(**context):
-    """Separate Airflow task for the human edit/review step before export."""
-    dag_run = context.get("dag_run")
-    notes = ""
-
-    if dag_run is not None:
-        conf = getattr(dag_run, "conf", {}) or {}
-        notes = conf.get("final_text") or conf.get("reviewed_text") or conf.get("notes") or ""
-
-    if not notes:
-        ti = context.get("ti")
-        if ti is not None:
-            previous = ti.xcom_pull(task_ids="ocr_image")
-            if isinstance(previous, dict):
-                notes = previous.get("transcribed_text") or ""
-
-    if not notes:
-        raise ValueError("No notes are available to revise.")
-
-    revised_text = notes.strip()
-    return {"revised_text": revised_text, "status": "revised"}
-
-
 def choose_export_format(**context):
     """Choose one export branch in the DAG: txt, word, or one."""
     dag_run = context.get("dag_run")
@@ -120,7 +97,6 @@ def export_word(**context):
 def export_one(**context):
     return export_notes_with_type(context, "one")
 
-
 def export_notes_with_type(context, file_type):
     ti = context.get("ti")
     notes = ""
@@ -129,6 +105,11 @@ def export_notes_with_type(context, file_type):
         previous = ti.xcom_pull(task_ids="revise_notes")
         if isinstance(previous, dict):
             notes = previous.get("revised_text") or ""
+
+        if not notes:
+            ocr_result = ti.xcom_pull(task_ids="ocr_image")
+            if isinstance(ocr_result, dict):
+                notes = ocr_result.get("transcribed_text") or ""
 
     if not notes:
         raise ValueError("No revised notes available for export")

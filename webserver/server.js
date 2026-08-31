@@ -13,7 +13,6 @@ const OCR_REVIEW_CACHE = new Map();
 dotenv.config({ path: path.resolve(process.cwd(), ".env") });
 dotenv.config({ path: path.resolve(process.cwd(), "..", ".env") });
 
-// Airflow REST API config
 const AIRFLOW_BASE_URL = process.env.AIRFLOW_BASE_URL || "http://localhost:8080";
 const AIRFLOW_DAG_ID = process.env.AIRFLOW_DAG_ID || "hackathon";
 const AIRFLOW_USERNAME = process.env.AIRFLOW_USERNAME || "admin";
@@ -22,10 +21,6 @@ const AIRFLOW_PASSWORD = process.env.AIRFLOW_PASSWORD || "admin";
 app.use(cors());
 app.use(express.json());
 
-// --- Multer setup: saves the uploaded image to disk ---
-// IMPORTANT: this "uploads" folder needs to be visible to Airflow's
-// worker/scheduler too, since the DAG runs in a separate process and
-// can't read Express's local filesystem otherwise.
 const UPLOAD_DIR = path.join(process.cwd(), "uploads");
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
@@ -188,10 +183,8 @@ app.get("/download/:dagRunId/:fileType", async (req, res) => {
     if (!dagRunResponse.ok) {
       throw new Error(`Could not find DAG run ${dagRunId}`);
     }
-
-    const runData = await dagRunResponse.json();
-    const dagRunConf = runData?.conf || {};
-    const finalText = dagRunConf.final_text || dagRunConf.notes || "";
+    
+    const finalText = await getFinalTextForDagRun(dagRunId);
 
     if (!finalText) {
       return res.status(400).json({ error: "No final text available for this DAG run." });
@@ -252,6 +245,23 @@ async function getAirflowToken() {
 
   const data = await res.json();
   return data.access_token;
+}
+
+async function getFinalTextForDagRun(dagRunId) {
+  const token = await getAirflowToken();
+  const xcomUrl = `${AIRFLOW_BASE_URL}/api/v2/dags/${AIRFLOW_DAG_ID}/dagRuns/${dagRunId}/taskInstances/revise_notes/xcomEntries/return_value`;
+
+  const xcomRes = await fetch(xcomUrl, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (!xcomRes.ok) return null;
+
+  const xcomData = await xcomRes.json();
+  const rawValue = xcomData.value ?? xcomData.data ?? xcomData;
+
+  const parsed = typeof rawValue === "string" ? JSON.parse(rawValue) : rawValue;
+  return parsed && typeof parsed === "object" ? parsed.revised_text || null : null;
 }
 
 async function triggerAirflowDag(imagePath) {
