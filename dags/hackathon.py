@@ -4,6 +4,7 @@ from datetime import datetime
 from pathlib import Path
 import urllib.error
 import urllib.request
+from dotenv import load_dotenv
 
 from airflow import DAG
 from airflow.operators.python import BranchPythonOperator, PythonOperator
@@ -32,9 +33,11 @@ except ModuleNotFoundError:
     )
 
 
-DEFAULT_DECISION_DIR = "/home/owen/airflow/user_decisions"
 DECISION_DIR = Path(
-    os.environ.get("AIRFLOW_DECISION_DIR", DEFAULT_DECISION_DIR)
+    os.environ.get(
+        "AIRFLOW_DECISION_DIR",
+        "/home/owen/airflow/user_decisions",
+    )
 )
 
 
@@ -94,7 +97,10 @@ def choose_enhancement_branch(**context):
 def enhance_notes(**context):
     ti = context["ti"]
 
-    choice = ti.xcom_pull(task_ids="load_user_choice") or {}
+    choice = ti.xcom_pull(
+        task_ids="load_user_choice",
+        key="return_value",
+    ) or {}
 
     notes = str(choice.get("notes") or "").strip()
     prompt = str(choice.get("prompt") or "").strip()
@@ -105,7 +111,8 @@ def enhance_notes(**context):
     if not prompt:
         raise ValueError("No GPT prompt was supplied.")
 
-    api_key = os.environ.get("OPENAI_API_KEY")
+    load_dotenv()
+    api_key = os.getenv("OPENAI_API_KEY")
 
     if not api_key:
         raise ValueError(
@@ -236,7 +243,7 @@ with DAG(
         python_callable=wait_for_user_choice,
         poke_interval=2,
         timeout=60 * 60,
-        mode="reschedule",
+        mode="poke",
     )
 
     load_choice = PythonOperator(

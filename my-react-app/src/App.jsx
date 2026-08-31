@@ -186,6 +186,20 @@ export default function App() {
     setShowOptions(false);
     setShowGptPrompt(false);
 
+    const continueRes = await fetch(`http://localhost:8000/continue/${dagRunId}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      enhance: true,
+      prompt: gptPrompt,
+    }),
+  });
+
+  if (!continueRes.ok) {
+    const body = await continueRes.json().catch(() => ({}));
+    throw new Error(body.error || `Server responded with ${continueRes.status}`);
+  }
+
     try {
       const res = await fetch("http://localhost:8000/enhance", {
         method: "POST",
@@ -214,12 +228,31 @@ export default function App() {
     }
   }
 
-function continueToNextStep() {
-  setShowOptions(false);
-  setShowGptPrompt(false);
-  setFinalNotes(savedOcrText);
-  setStatus("success");
-  setMessage("Choose a file type to download your notes.");
+async function continueToNextStep() {
+  try {
+    const res = await fetch(`http://localhost:8000/continue/${dagRunId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        enhance: false,
+        prompt: "",
+      }),
+    });
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `Server responded with ${res.status}`);
+    }
+
+    setShowOptions(false);
+    setShowGptPrompt(false);
+    setFinalNotes(savedOcrText);
+    setStatus("success");
+    setMessage("Choose a file type to download your notes.");
+  } catch (err) {
+    setStatus("error");
+    setMessage(err.message || "Failed to continue.");
+  }
 }
 
   return (

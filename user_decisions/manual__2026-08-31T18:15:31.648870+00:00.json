@@ -1,0 +1,7 @@
+{
+  "dag_run_id": "manual__2026-08-31T18:15:31.648870+00:00",
+  "enhance": true,
+  "prompt": "add facts about metal gear",
+  "notes": "This is a test for\nOpenAI image recognition\nNotes:\n- OpenAI is a company that specializes in A.I. models. They created ChatGPT.\n- The Astronomer hackathon must be submitted by September 24th.\n- I will be discussing .NET and Grafana with William Sharpe today",
+  "created_at": "2026-08-31T18:17:13.923Z"
+}
