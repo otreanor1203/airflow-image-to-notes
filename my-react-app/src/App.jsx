@@ -32,9 +32,34 @@ export default function App() {
         throw new Error("No DAG run is available to generate the file.");
       }
 
-      const response = await fetch(
-        `http://localhost:8000/download/${dagRunId}/${fileType}`,
+      const choiceResponse = await fetch(
+        `http://localhost:8000/export-choice/${dagRunId}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ file_type: fileType }),
+        },
       );
+
+      if (!choiceResponse.ok) {
+        const body = await choiceResponse.json().catch(() => ({}));
+        throw new Error(
+          body.error || `Server responded with ${choiceResponse.status}`,
+        );
+      }
+
+      setIsProcessing(true);
+      setMessage("Creating your file...");
+
+      let response;
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        response = await fetch(
+          `http://localhost:8000/download/${dagRunId}/${fileType}`,
+        );
+        if (response.status !== 202) break;
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+      }
+
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
         throw new Error(
@@ -47,8 +72,8 @@ export default function App() {
       const link = document.createElement("a");
       link.href = url;
       const normalized =
-        fileType === "word"
-          ? "notes.doc"
+        fileType === "word" || fileType === "docx"
+          ? "notes.docx"
           : fileType === "one"
             ? "notes.one"
             : "notes.txt";
@@ -63,6 +88,8 @@ export default function App() {
     } catch (err) {
       setStatus("error");
       setMessage(err.message || "Download failed.");
+    } finally {
+      setIsProcessing(false);
     }
   }
 
@@ -219,11 +246,34 @@ export default function App() {
       }
 
       const data = await res.json();
+
+      const continueRes = await fetch(
+        `http://localhost:8000/continue/${dagRunId}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            enhance: true,
+            prompt: gptPrompt,
+          }),
+        },
+      );
+
+      if (!continueRes.ok) {
+        const body = await continueRes.json().catch(() => ({}));
+        throw new Error(
+          body.error || `Server responded with ${continueRes.status}`,
+        );
+      }
+
       setFinalNotes(data.final_notes || "");
       setShowGptPrompt(false);
+      setShowOptions(false);
       setStatus("success");
       setMessage("GPT enhanced your notes.");
     } catch (err) {
+      setShowOptions(true);
+      setShowGptPrompt(true);
       setStatus("error");
       setMessage(err.message || "GPT enhancement failed.");
     } finally {
@@ -389,10 +439,10 @@ export default function App() {
                 TXT
               </button>
               <button
-                onClick={() => downloadNotes("word")}
+                onClick={() => downloadNotes("docx")}
                 disabled={isProcessing}
               >
-                Word
+                DOCX
               </button>
               <button
                 onClick={() => downloadNotes("one")}

@@ -1,6 +1,6 @@
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 import urllib.error
 import urllib.request
@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 
 from airflow import DAG
 from airflow.operators.python import BranchPythonOperator, PythonOperator
+from airflow.providers.standard.operators.hitl import HITLEntryOperator
 from airflow.providers.standard.sensors.python import PythonSensor
 from airflow.utils.trigger_rule import TriggerRule
 
@@ -16,20 +17,14 @@ try:
     from tasks.ocr_image import ocr_image
     from tasks.revise_notes import revise_notes
     from tasks.export_notes import (
-        export_one,
-        export_txt,
-        export_word,
-        choose_export_format,
+        export_file,
     )
 except ModuleNotFoundError:
     from dags.tasks.detect_image import detect_image
     from dags.tasks.ocr_image import ocr_image
     from dags.tasks.revise_notes import revise_notes
     from dags.tasks.export_notes import (
-        export_one,
-        export_txt,
-        export_word,
-        choose_export_format,
+        export_file,
     )
 
 
@@ -261,25 +256,18 @@ with DAG(
         python_callable=enhance_notes,
     )
 
-    choose_export = BranchPythonOperator(
+    choose_export = HITLEntryOperator(
         task_id="choose_export_format",
-        python_callable=choose_export_format,
-        trigger_rule=TriggerRule.NONE_FAILED_MIN_ONE_SUCCESS,
+        subject="Choose an export format",
+        body="Select the file format to create.",
+        options=["txt", "docx", "one"],
+        defaults=["txt"],
+        response_timeout=timedelta(hours=1),
     )
 
-    export_txt_task = PythonOperator(
-        task_id="export_txt",
-        python_callable=export_txt,
-    )
-
-    export_word_task = PythonOperator(
-        task_id="export_word",
-        python_callable=export_word,
-    )
-
-    export_one_task = PythonOperator(
-        task_id="export_one",
-        python_callable=export_one,
+    export_file_task = PythonOperator(
+        task_id="export_file",
+        python_callable=export_file,
     )
 
 
@@ -291,9 +279,4 @@ choose_enhancement >> [
 ]
 
 gpt_enhance >> choose_export
-
-choose_export >> [
-    export_txt_task,
-    export_word_task,
-    export_one_task,
-]
+choose_export >> export_file_task

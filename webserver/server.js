@@ -166,6 +166,55 @@ app.post("/continue/:dagRunId", async (req, res) => {
   }
 });
 
+app.post("/export-choice/:dagRunId", async (req, res) => {
+  const { dagRunId } = req.params;
+  const { file_type } = req.body || {};
+  const normalizedType = file_type === "docx" ? "docx" : file_type;
+
+  if (!["txt", "docx", "one"].includes(normalizedType)) {
+    return res.status(400).json({ error: "Unsupported export format." });
+  }
+
+  try {
+    const token = await getAirflowToken();
+    const taskUrl = `${AIRFLOW_BASE_URL}/api/v2/dags/${AIRFLOW_DAG_ID}/dagRuns/${dagRunId}/taskInstances/choose_export_format`;
+    const taskResponse = await fetch(taskUrl, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    if (!taskResponse.ok) {
+      throw new Error(`Could not find export choice task (${taskResponse.status}).`);
+    }
+
+    const task = await taskResponse.json();
+    const response = await fetch(
+      `${taskUrl}/-1/hitlDetails`,
+      {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          ti_id: task.id,
+          chosen_options: [normalizedType],
+          params_input: {},
+        }),
+      },
+    );
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`Airflow rejected export choice (${response.status}): ${body}`);
+    }
+
+    return res.status(200).json({ status: "export_choice_saved", file_type: normalizedType });
+  } catch (err) {
+    console.error("Failed to submit export choice:", err);
+    return res.status(500).json({ error: "Failed to submit export choice.", details: err.message });
+  }
+});
+
 app.post("/enhance", async (req, res) => {
   const { notes, prompt } = req.body || {};
 
@@ -183,28 +232,63 @@ app.post("/enhance", async (req, res) => {
       throw new Error("OPENAI_API_KEY is not configured.");
     }
 
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: "gpt-4o-mini",
-        messages: [
-          {
-            role: "system",
-            content:
-              "You are a note-enhancement assistant. Improve and polish the user's notes without inventing facts. Preserve the original meaning, fix formatting issues, and make the notes cleaner and more readable. Return only the final enhanced notes as plain text.",
-          },
-          {
-            role: "user",
-            content: `User prompt: ${prompt}\n\nOriginal notes:\n${notes}`,
-          },
-        ],
-        temperature: 0.4,
-      }),
+    const requestBody = JSON.stringify({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a note-enhancement assistant. Improve and polish the user's notes without inventing facts. Preserve the original meaning, fix formatting issues, and make the notes cleaner and more readable. Return only the final enhanced notes as plain text.",
+        },
+        {
+          role: "user",
+          content: `User prompt: ${prompt.trim()}\n\nOriginal notes:\n${notes.trim()}`,
+        },
+      ],
+      temperature: 0.4,
     });
+
+    let response;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 120000);
+
+      try {
+        response = await fetch("https://api.openai.com/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: requestBody,
+          signal: controller.signal,
+        });
+      } catch (err) {
+        if (attempt === 2) {
+          throw new Error(
+            err.name === "AbortError"
+              ? "OpenAI request timed out after 120 seconds."
+              : `Could not reach OpenAI: ${err.message}`,
+          );
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)));
+        continue;
+      } finally {
+        clearTimeout(timeout);
+      }
+
+      if (response.ok || ![429, 500, 502, 503, 504].includes(response.status)) {
+        break;
+      }
+
+      if (attempt < 2) {
+        const retryAfter = Number(response.headers.get("retry-after"));
+        const delay = Number.isFinite(retryAfter)
+          ? Math.min(retryAfter * 1000, 10000)
+          : 1000 * (attempt + 1);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
 
     if (!response.ok) {
       const text = await response.text();
@@ -230,7 +314,7 @@ app.post("/enhance", async (req, res) => {
 
 app.get("/download/:dagRunId/:fileType", async (req, res) => {
   const { dagRunId, fileType } = req.params;
-  const allowed = new Set(["txt", "word", "doc", "one", "onenote"]);
+  const allowed = new Set(["txt", "word", "doc", "docx", "one", "onenote"]);
 
   if (!allowed.has(fileType)) {
     return res.status(400).json({ error: "Unsupported file type." });
@@ -247,38 +331,24 @@ app.get("/download/:dagRunId/:fileType", async (req, res) => {
       throw new Error(`Could not find DAG run ${dagRunId}`);
     }
 
-    const finalText = await getFinalTextForDagRun(dagRunId);
-
-    if (!finalText) {
-      return res.status(400).json({ error: "No final text available for this DAG run." });
-    }
-
-    const exportRoot = path.resolve(process.cwd(), "..", "exports");
-    fs.mkdirSync(exportRoot, { recursive: true });
-
-    const normalizedType = fileType === "doc" ? "word" : fileType === "onenote" ? "one" : fileType;
-    const fileTypeArg = normalizedType === "word" ? "word" : normalizedType === "one" ? "one" : "txt";
-    const fileName = `notes.${fileTypeArg === "word" ? "doc" : fileTypeArg === "one" ? "one" : "txt"}`;
-    const filePath = path.join(exportRoot, fileName);
-
-    const pythonProcess = spawnSync("python3", [
-      "-c",
-      `import sys; sys.path.insert(0, '/home/owen/airflow'); from dags.tasks.export_notes import create_export_file; print(create_export_file(sys.argv[1], file_type=sys.argv[2], output_dir=sys.argv[3]))`,
-      finalText,
-      fileTypeArg,
-      exportRoot,
-    ], {
-      encoding: "utf-8",
+    const normalizedType = fileType === "doc" || fileType === "word" ? "docx" : fileType === "onenote" ? "one" : fileType;
+    const fileName = `notes.${normalizedType === "docx" ? "docx" : normalizedType === "one" ? "one" : "txt"}`;
+    const exportXcomUrl = `${AIRFLOW_BASE_URL}/api/v2/dags/${AIRFLOW_DAG_ID}/dagRuns/${dagRunId}/taskInstances/export_file/xcomEntries/return_value`;
+    const exportXcomResponse = await fetch(exportXcomUrl, {
+      headers: { Authorization: `Bearer ${token}` },
     });
 
-    if (pythonProcess.status !== 0) {
-      const stderr = pythonProcess.stderr || "";
-      throw new Error(stderr || "Airflow export helper failed.");
+    if (!exportXcomResponse.ok) {
+      return res.status(202).json({ status: "pending" });
     }
 
-    const generatedPath = (pythonProcess.stdout || "").trim();
+    const exportXcom = await exportXcomResponse.json();
+    const exportResult = exportXcom.value ?? exportXcom.data ?? exportXcom;
+    const parsedResult = typeof exportResult === "string" ? JSON.parse(exportResult) : exportResult;
+    const generatedPath = parsedResult?.output_path;
+
     if (!generatedPath || !fs.existsSync(generatedPath)) {
-      throw new Error("Airflow export helper did not produce a file.");
+      return res.status(202).json({ status: "pending" });
     }
 
     res.download(generatedPath, fileName);
