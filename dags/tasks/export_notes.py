@@ -112,9 +112,20 @@ def export_file(**context):
         if chosen_options:
             file_type = str(chosen_options[0]).lower()
 
+    enhancement_choice = (
+        ti.xcom_pull(task_ids="choose_enhancement") if ti is not None else None
+    )
+    if isinstance(enhancement_choice, dict):
+        params_input = enhancement_choice.get("params_input", {})
+        notes = str(params_input.get("notes") or "").strip()
+
     if ti is not None:
+        enhanced_result = ti.xcom_pull(task_ids="gpt_enhance")
+        if isinstance(enhanced_result, dict):
+            notes = str(enhanced_result.get("final_notes") or "").strip()
+
         previous = ti.xcom_pull(task_ids="revise_notes")
-        if isinstance(previous, dict):
+        if not notes and isinstance(previous, dict):
             notes = previous.get("revised_text") or ""
 
         if not notes:

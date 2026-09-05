@@ -7,10 +7,10 @@ import urllib.request
 from dotenv import load_dotenv
 
 from airflow import DAG
+from airflow.models.param import Param
 from airflow.operators.python import BranchPythonOperator, PythonOperator
 from airflow.providers.standard.operators.hitl import HITLEntryOperator
-from airflow.providers.standard.sensors.python import PythonSensor
-from airflow.utils.trigger_rule import TriggerRule
+from airflow.task.trigger_rule import TriggerRule
 
 try:
     from tasks.detect_image import detect_image
@@ -28,63 +28,12 @@ except ModuleNotFoundError:
     )
 
 
-DECISION_DIR = Path(
-    os.environ.get(
-        "AIRFLOW_DECISION_DIR",
-        "/home/owen/airflow/user_decisions",
-    )
-)
-
-
-def decision_path(dag_run_id):
-    return DECISION_DIR / f"{dag_run_id}.json"
-
-
-def wait_for_user_choice(**context):
-    dag_run = context["dag_run"]
-    return decision_path(dag_run.run_id).exists()
-
-
-def load_user_choice(**context):
-    dag_run = context["dag_run"]
-    path = decision_path(dag_run.run_id)
-
-    if not path.exists():
-        raise ValueError(f"User decision not found: {path}")
-
-    with path.open("r", encoding="utf-8") as f:
-        decision = json.load(f)
-
-    notes = str(decision.get("notes") or "").strip()
-    prompt = str(decision.get("prompt") or "").strip()
-    enhance = bool(decision.get("enhance"))
-
-    if not notes:
-        ti = context["ti"]
-        previous = ti.xcom_pull(task_ids="revise_notes")
-
-        if isinstance(previous, dict):
-            notes = str(previous.get("revised_text") or "").strip()
-
-    if not notes:
-        raise ValueError("No notes were supplied.")
-
-    return {
-        "notes": notes,
-        "prompt": prompt,
-        "enhance": enhance,
-    }
-
-
 def choose_enhancement_branch(**context):
-    dag_run = context["dag_run"]
-    path = decision_path(dag_run.run_id)
+    choice = context["ti"].xcom_pull(task_ids="choose_enhancement") or {}
+    chosen_options = choice.get("chosen_options", [])
 
-    with path.open("r", encoding="utf-8") as f:
-        decision = json.load(f)
-
-    if decision.get("enhance") is True:
-        return "gpt_enhance"
+    if chosen_options and str(chosen_options[0]).lower() == "yes":
+        return "gpt_prompt"
 
     return "choose_export_format"
 
@@ -92,13 +41,16 @@ def choose_enhancement_branch(**context):
 def enhance_notes(**context):
     ti = context["ti"]
 
-    choice = ti.xcom_pull(
-        task_ids="load_user_choice",
-        key="return_value",
-    ) or {}
+    choice = ti.xcom_pull(task_ids="gpt_prompt") or {}
+    params_input = choice.get("params_input", {})
 
-    notes = str(choice.get("notes") or "").strip()
-    prompt = str(choice.get("prompt") or "").strip()
+    notes_result = ti.xcom_pull(task_ids="revise_notes") or {}
+    notes = str(
+        params_input.get("notes")
+        or notes_result.get("revised_text")
+        or ""
+    ).strip()
+    prompt = str(params_input.get("prompt") or "").strip()
 
     if not notes:
         raise ValueError("No notes are available for GPT enhancement.")
@@ -124,11 +76,13 @@ def enhance_notes(**context):
                 "role": "system",
                 "content": (
                     "You are a note-enhancement assistant. "
-                    "Improve and polish the user's notes without "
-                    "inventing facts. Preserve the original meaning, "
-                    "fix formatting issues, and make the notes cleaner "
-                    "and more readable. Return only the final enhanced "
-                    "notes as plain text."
+                    "Follow the user's prompt carefully. Improve and "
+                    "polish the notes, preserve their original meaning, "
+                    "and fix formatting issues. If the user explicitly "
+                    "requests new factual content, include accurate, "
+                    "relevant additions and keep them clearly separated "
+                    "from the original notes. Return only the final "
+                    "enhanced notes as plain text."
                 ),
             },
             {
@@ -233,22 +187,49 @@ with DAG(
         python_callable=revise_notes,
     )
 
-    wait_for_choice = PythonSensor(
-        task_id="wait_for_user_choice",
-        python_callable=wait_for_user_choice,
-        poke_interval=2,
-        timeout=60 * 60,
-        mode="poke",
-    )
-
-    load_choice = PythonOperator(
-        task_id="load_user_choice",
-        python_callable=load_user_choice,
-    )
-
-    choose_enhancement = BranchPythonOperator(
+    choose_enhancement = HITLEntryOperator(
         task_id="choose_enhancement",
+        subject="Enhance your notes with GPT?",
+        body="Choose Yes to provide an enhancement prompt, or No to export the notes as they are.",
+        options=["yes", "no"],
+        defaults=["no"],
+        params={
+            "notes": Param(
+                "",
+                type="string",
+                title="Finalized notes",
+                description="The finalized OCR text for the next task.",
+            ),
+        },
+        response_timeout=timedelta(hours=1),
+    )
+
+    enhancement_branch = BranchPythonOperator(
+        task_id="enhancement_branch",
         python_callable=choose_enhancement_branch,
+    )
+
+    gpt_prompt = HITLEntryOperator(
+        task_id="gpt_prompt",
+        subject="Enter a prompt for GPT",
+        body="Tell GPT how you want the notes improved.",
+        options=["submit"],
+        defaults=["submit"],
+        params={
+            "notes": Param(
+                "",
+                type="string",
+                title="Finalized notes",
+                description="The finalized OCR text to enhance.",
+            ),
+            "prompt": Param(
+                "",
+                type="string",
+                title="Enhancement prompt",
+                description="Describe how GPT should improve the notes.",
+            ),
+        },
+        response_timeout=timedelta(hours=1),
     )
 
     gpt_enhance = PythonOperator(
@@ -262,6 +243,7 @@ with DAG(
         body="Select the file format to create.",
         options=["txt", "docx", "one"],
         defaults=["txt"],
+        trigger_rule=TriggerRule.NONE_FAILED_MIN_ONE_SUCCESS,
         response_timeout=timedelta(hours=1),
     )
 
@@ -271,12 +253,13 @@ with DAG(
     )
 
 
-detect >> ocr >> revise >> wait_for_choice >> load_choice >> choose_enhancement
+detect >> ocr >> revise >> choose_enhancement >> enhancement_branch
 
-choose_enhancement >> [
-    gpt_enhance,
+enhancement_branch >> [
+    gpt_prompt,
     choose_export,
 ]
 
+gpt_prompt >> gpt_enhance
 gpt_enhance >> choose_export
 choose_export >> export_file_task

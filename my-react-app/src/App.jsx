@@ -20,12 +20,17 @@ export default function App() {
   const [hasSubmitted, setHasSubmitted] = useState(false);
 
   async function downloadNotes(fileType) {
+    if (isProcessing) return;
+
     const content = finalNotes || savedOcrText || reviewText || "";
     if (!content.trim()) {
       setStatus("error");
       setMessage("There is no content to download yet.");
       return;
     }
+
+    setIsProcessing(true);
+    setMessage("Submitting your file format...");
 
     try {
       if (!dagRunId) {
@@ -48,7 +53,6 @@ export default function App() {
         );
       }
 
-      setIsProcessing(true);
       setMessage("Creating your file...");
 
       let response;
@@ -58,6 +62,12 @@ export default function App() {
         );
         if (response.status !== 202) break;
         await new Promise((resolve) => setTimeout(resolve, 1500));
+      }
+
+      if (response.status === 202) {
+        throw new Error(
+          "The export is still pending. Please try again shortly.",
+        );
       }
 
       if (!response.ok) {
@@ -126,7 +136,7 @@ export default function App() {
         if (data.status === "needs_review") {
           setStatus("success");
           setMessage(
-            "OCR result returned. Please review and fix the text below.",
+            "OCR result returned. Please review and fix the text above.",
           );
           setReviewText(data.result.transcribed_text || "");
           setNeedsReview(true);
@@ -136,7 +146,9 @@ export default function App() {
         setStatus("success");
         setMessage("OCR finished successfully.");
         setReviewText(data.result.transcribed_text || "");
+        setSavedOcrText(data.result.transcribed_text || "");
         setNeedsReview(false);
+        setShowOptions(true);
         return;
       } catch (err) {
         setStatus("error");
@@ -228,49 +240,49 @@ export default function App() {
 
     setNeedsReview(false);
     setShowOptions(false);
-    setShowGptPrompt(false);
+    setShowGptPrompt(true);
 
     try {
-      const res = await fetch("http://localhost:8000/enhance", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          notes: savedOcrText,
-          prompt: gptPrompt,
-        }),
-      });
+      const res = await fetch(
+        `http://localhost:8000/enhancement-prompt/${dagRunId}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            prompt: gptPrompt,
+            notes: savedOcrText,
+          }),
+        },
+      );
 
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error || `Server responded with ${res.status}`);
       }
 
-      const data = await res.json();
+      let resultResponse;
+      for (let attempt = 0; attempt < 80; attempt += 1) {
+        resultResponse = await fetch(
+          `http://localhost:8000/enhancement-result/${dagRunId}`,
+        );
+        if (resultResponse.status !== 202) break;
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+      }
 
-      const continueRes = await fetch(
-        `http://localhost:8000/continue/${dagRunId}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            enhance: true,
-            prompt: gptPrompt,
-          }),
-        },
-      );
-
-      if (!continueRes.ok) {
-        const body = await continueRes.json().catch(() => ({}));
+      if (!resultResponse.ok) {
+        const body = await resultResponse.json().catch(() => ({}));
         throw new Error(
-          body.error || `Server responded with ${continueRes.status}`,
+          body.error || `Server responded with ${resultResponse.status}`,
         );
       }
 
-      setFinalNotes(data.final_notes || "");
+      const data = await resultResponse.json();
+
+      setFinalNotes(data.result?.final_notes || "");
       setShowGptPrompt(false);
       setShowOptions(false);
       setStatus("success");
-      setMessage("GPT enhanced your notes.");
+      setMessage("GPT enhanced your notes. Choose a file type to download.");
     } catch (err) {
       setShowOptions(true);
       setShowGptPrompt(true);
@@ -282,20 +294,77 @@ export default function App() {
     }
   }
 
-  async function continueToNextStep() {
+  async function chooseEnhancement() {
+    if (!dagRunId || isProcessing) return;
+
+    setIsProcessing(true);
     try {
-      const res = await fetch(`http://localhost:8000/continue/${dagRunId}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          enhance: false,
-          prompt: "",
-        }),
-      });
+      const res = await fetch(
+        `http://localhost:8000/enhancement-choice/${dagRunId}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            enhance: true,
+            notes: savedOcrText,
+          }),
+        },
+      );
 
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error || `Server responded with ${res.status}`);
+      }
+
+      setShowOptions(false);
+      setShowGptPrompt(true);
+      setStatus("success");
+      setMessage("Enter a prompt for GPT.");
+    } catch (err) {
+      setStatus("error");
+      setMessage(err.message || "Failed to choose GPT enhancement.");
+    } finally {
+      setIsProcessing(false);
+    }
+  }
+
+  async function continueToNextStep() {
+    if (!dagRunId || isProcessing) return;
+
+    setIsProcessing(true);
+    try {
+      const res = await fetch(
+        `http://localhost:8000/enhancement-choice/${dagRunId}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            enhance: false,
+            notes: savedOcrText,
+          }),
+        },
+      );
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `Server responded with ${res.status}`);
+      }
+
+      for (let attempt = 0; attempt < 60; attempt += 1) {
+        const statusResponse = await fetch(
+          `http://localhost:8000/export-choice-status/${dagRunId}`,
+        );
+        if (statusResponse.status === 200) break;
+        if (!statusResponse.ok && statusResponse.status !== 202) {
+          const body = await statusResponse.json().catch(() => ({}));
+          throw new Error(
+            body.error || `Server responded with ${statusResponse.status}`,
+          );
+        }
+        if (attempt === 59) {
+          throw new Error("Airflow is taking too long to prepare file export.");
+        }
+        await new Promise((resolve) => setTimeout(resolve, 500));
       }
 
       setShowOptions(false);
@@ -306,6 +375,8 @@ export default function App() {
     } catch (err) {
       setStatus("error");
       setMessage(err.message || "Failed to continue.");
+    } finally {
+      setIsProcessing(false);
     }
   }
 
@@ -357,23 +428,20 @@ export default function App() {
         </div>
       )}
 
-      {reviewText && !needsReview && !showOptions && !finalNotes && (
+      {reviewText && !needsReview && !showGptPrompt && !finalNotes && (
         <div style={{ marginTop: 20 }}>
           <h3>OCR result</h3>
-          <textarea
-            value={reviewText}
-            onChange={(e) => setReviewText(e.target.value)}
-            rows={8}
-            style={{ width: "100%", boxSizing: "border-box" }}
-          />
-          <div style={{ marginTop: 10 }}>
-            <button
-              onClick={saveOcrText}
-              disabled={reviewSaving || !reviewText.trim() || isProcessing}
-            >
-              {reviewSaving ? "Saving..." : "Save final OCR result"}
-            </button>
-          </div>
+          <pre
+            style={{
+              width: "100%",
+              boxSizing: "border-box",
+              whiteSpace: "pre-wrap",
+              background: "#f5f5f5",
+              padding: 12,
+            }}
+          >
+            {reviewText}
+          </pre>
         </div>
       )}
 
@@ -381,10 +449,7 @@ export default function App() {
         <div style={{ marginTop: 20 }}>
           <h3>What next?</h3>
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-            <button
-              onClick={() => setShowGptPrompt(true)}
-              disabled={isProcessing}
-            >
+            <button onClick={chooseEnhancement} disabled={isProcessing}>
               Send to GPT
             </button>
             <button onClick={continueToNextStep} disabled={isProcessing}>
@@ -396,6 +461,16 @@ export default function App() {
 
       {showGptPrompt && (
         <div style={{ marginTop: 20 }}>
+          <h3>OCR result</h3>
+          <pre
+            style={{
+              whiteSpace: "pre-wrap",
+              background: "#f5f5f5",
+              padding: 12,
+            }}
+          >
+            {savedOcrText}
+          </pre>
           <label style={{ display: "block", fontWeight: 600, marginBottom: 8 }}>
             Enter a prompt for GPT
           </label>
@@ -413,6 +488,11 @@ export default function App() {
               {gptLoading ? "Enhancing..." : "Enhance my notes"}
             </button>
           </div>
+          {gptLoading && (
+            <p style={{ marginTop: 12, color: "green" }}>
+              GPT is working on your notes...
+            </p>
+          )}
         </div>
       )}
 

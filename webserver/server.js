@@ -9,6 +9,7 @@ import { spawnSync } from "child_process";
 const app = express();
 const PORT = process.env.PORT || 8000;
 const OCR_REVIEW_CACHE = new Map();
+const HITL_SUBMISSIONS = new Map();
 
 dotenv.config({ path: path.resolve(process.cwd(), ".env") });
 dotenv.config({ path: path.resolve(process.cwd(), "..", ".env") });
@@ -166,6 +167,168 @@ app.post("/continue/:dagRunId", async (req, res) => {
   }
 });
 
+async function submitHitlResponse(dagRunId, taskId, chosenOptions, paramsInput = {}) {
+  const submissionKey = `${dagRunId}:${taskId}`;
+  const activeSubmission = HITL_SUBMISSIONS.get(submissionKey);
+  if (activeSubmission) return activeSubmission;
+
+  const submission = submitHitlResponseOnce(
+    dagRunId,
+    taskId,
+    chosenOptions,
+    paramsInput,
+  );
+  HITL_SUBMISSIONS.set(submissionKey, submission);
+
+  try {
+    await submission;
+  } finally {
+    HITL_SUBMISSIONS.delete(submissionKey);
+  }
+}
+
+async function submitHitlResponseOnce(dagRunId, taskId, chosenOptions, paramsInput) {
+  const token = await getAirflowToken();
+  const taskUrl = `${AIRFLOW_BASE_URL}/api/v2/dags/${AIRFLOW_DAG_ID}/dagRuns/${dagRunId}/taskInstances/${taskId}`;
+
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    const taskResponse = await fetch(taskUrl, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    if (!taskResponse.ok) {
+      if (attempt < 59) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        continue;
+      }
+      throw new Error(`Could not find ${taskId} (${taskResponse.status}).`);
+    }
+
+    const task = await taskResponse.json();
+    if (task.state === "success") return;
+    if (!["awaiting_input", "deferred"].includes(task.state)) {
+      if (attempt < 59) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        continue;
+      }
+      throw new Error(`Timed out waiting for ${taskId} to await input (state: ${task.state}).`);
+    }
+
+    const response = await fetch(`${taskUrl}/-1/hitlDetails`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        ti_id: task.id,
+        chosen_options: chosenOptions,
+        params_input: paramsInput,
+      }),
+    });
+
+    if (response.ok) return;
+
+    const body = await response.text();
+    if (response.status === 409) {
+      return;
+    }
+    if (
+      response.status === 404 &&
+      body.includes("Human-in-the-loop detail does not exist") &&
+      attempt < 59
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      continue;
+    }
+
+    throw new Error(`Airflow rejected ${taskId} (${response.status}): ${body}`);
+  }
+
+  throw new Error(`Timed out waiting for ${taskId} to accept the HITL response.`);
+}
+
+app.post("/enhancement-choice/:dagRunId", async (req, res) => {
+  const { dagRunId } = req.params;
+  const { enhance, notes } = req.body || {};
+
+  if (typeof enhance !== "boolean") {
+    return res.status(400).json({ error: "enhance must be true or false." });
+  }
+
+  try {
+    await submitHitlResponse(
+      dagRunId,
+      "choose_enhancement",
+      [enhance ? "yes" : "no"],
+      { notes: typeof notes === "string" ? notes.trim() : "" },
+    );
+    return res.status(200).json({ status: "enhancement_choice_saved", enhance });
+  } catch (err) {
+    console.error("Failed to submit enhancement choice:", err);
+    return res.status(500).json({ error: "Failed to submit enhancement choice.", details: err.message });
+  }
+});
+
+app.post("/enhancement-prompt/:dagRunId", async (req, res) => {
+  const { dagRunId } = req.params;
+  const { prompt, notes } = req.body || {};
+
+  if (!prompt || typeof prompt !== "string" || !prompt.trim()) {
+    return res.status(400).json({ error: "A valid prompt is required." });
+  }
+
+  try {
+    await submitHitlResponse(dagRunId, "gpt_prompt", ["submit"], {
+      prompt: prompt.trim(),
+      notes: typeof notes === "string" ? notes.trim() : "",
+    });
+    return res.status(200).json({ status: "prompt_saved" });
+  } catch (err) {
+    console.error("Failed to submit GPT prompt:", err);
+    return res.status(500).json({ error: "Failed to submit GPT prompt.", details: err.message });
+  }
+});
+
+app.get("/enhancement-result/:dagRunId", async (req, res) => {
+  const { dagRunId } = req.params;
+
+  try {
+    const token = await getAirflowToken();
+    const taskUrl = `${AIRFLOW_BASE_URL}/api/v2/dags/${AIRFLOW_DAG_ID}/dagRuns/${dagRunId}/taskInstances/gpt_enhance`;
+    const taskResponse = await fetch(taskUrl, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    if (!taskResponse.ok) {
+      return res.status(202).json({ status: "pending" });
+    }
+
+    const task = await taskResponse.json();
+    if (task.state === "failed") {
+      return res.status(500).json({ error: "Airflow GPT enhancement failed." });
+    }
+    if (task.state !== "success") {
+      return res.status(202).json({ status: "pending" });
+    }
+
+    const xcomResponse = await fetch(`${taskUrl}/xcomEntries/return_value`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!xcomResponse.ok) {
+      return res.status(202).json({ status: "pending" });
+    }
+
+    const xcom = await xcomResponse.json();
+    const rawValue = xcom.value ?? xcom.data ?? xcom;
+    const result = typeof rawValue === "string" ? JSON.parse(rawValue) : rawValue;
+    return res.status(200).json({ status: "enhanced", result });
+  } catch (err) {
+    console.error("Failed to fetch enhancement result:", err);
+    return res.status(500).json({ error: "Failed to fetch enhancement result.", details: err.message });
+  }
+});
+
 app.post("/export-choice/:dagRunId", async (req, res) => {
   const { dagRunId } = req.params;
   const { file_type } = req.body || {};
@@ -176,42 +339,40 @@ app.post("/export-choice/:dagRunId", async (req, res) => {
   }
 
   try {
-    const token = await getAirflowToken();
-    const taskUrl = `${AIRFLOW_BASE_URL}/api/v2/dags/${AIRFLOW_DAG_ID}/dagRuns/${dagRunId}/taskInstances/choose_export_format`;
-    const taskResponse = await fetch(taskUrl, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-
-    if (!taskResponse.ok) {
-      throw new Error(`Could not find export choice task (${taskResponse.status}).`);
-    }
-
-    const task = await taskResponse.json();
-    const response = await fetch(
-      `${taskUrl}/-1/hitlDetails`,
-      {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          ti_id: task.id,
-          chosen_options: [normalizedType],
-          params_input: {},
-        }),
-      },
-    );
-
-    if (!response.ok) {
-      const body = await response.text();
-      throw new Error(`Airflow rejected export choice (${response.status}): ${body}`);
-    }
-
+    await submitHitlResponse(dagRunId, "choose_export_format", [normalizedType]);
     return res.status(200).json({ status: "export_choice_saved", file_type: normalizedType });
   } catch (err) {
     console.error("Failed to submit export choice:", err);
     return res.status(500).json({ error: "Failed to submit export choice.", details: err.message });
+  }
+});
+
+app.get("/export-choice-status/:dagRunId", async (req, res) => {
+  const { dagRunId } = req.params;
+
+  try {
+    const token = await getAirflowToken();
+    const response = await fetch(
+      `${AIRFLOW_BASE_URL}/api/v2/dags/${AIRFLOW_DAG_ID}/dagRuns/${dagRunId}/taskInstances/choose_export_format`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+
+    if (!response.ok) {
+      return res.status(202).json({ status: "pending" });
+    }
+
+    const task = await response.json();
+    if (["awaiting_input", "deferred"].includes(task.state)) {
+      return res.status(200).json({ status: "ready" });
+    }
+    if (["failed", "upstream_failed"].includes(task.state)) {
+      return res.status(500).json({ error: "Airflow export choice task failed." });
+    }
+
+    return res.status(202).json({ status: "pending" });
+  } catch (err) {
+    console.error("Failed to check export choice status:", err);
+    return res.status(500).json({ error: "Failed to check export choice status.", details: err.message });
   }
 });
 
@@ -238,7 +399,7 @@ app.post("/enhance", async (req, res) => {
         {
           role: "system",
           content:
-            "You are a note-enhancement assistant. Improve and polish the user's notes without inventing facts. Preserve the original meaning, fix formatting issues, and make the notes cleaner and more readable. Return only the final enhanced notes as plain text.",
+            "You are a note-enhancement assistant. Follow the user's prompt carefully. Improve and polish the notes, preserve their original meaning, and fix formatting issues. If the user explicitly requests new factual content, include accurate, relevant additions and keep them clearly separated from the original notes. Return only the final enhanced notes as plain text.",
         },
         {
           role: "user",
@@ -333,7 +494,18 @@ app.get("/download/:dagRunId/:fileType", async (req, res) => {
 
     const normalizedType = fileType === "doc" || fileType === "word" ? "docx" : fileType === "onenote" ? "one" : fileType;
     const fileName = `notes.${normalizedType === "docx" ? "docx" : normalizedType === "one" ? "one" : "txt"}`;
-    const exportXcomUrl = `${AIRFLOW_BASE_URL}/api/v2/dags/${AIRFLOW_DAG_ID}/dagRuns/${dagRunId}/taskInstances/export_file/xcomEntries/return_value`;
+    const exportTaskUrl = `${AIRFLOW_BASE_URL}/api/v2/dags/${AIRFLOW_DAG_ID}/dagRuns/${dagRunId}/taskInstances/export_file`;
+    const exportTaskResponse = await fetch(exportTaskUrl, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (exportTaskResponse.ok) {
+      const exportTask = await exportTaskResponse.json();
+      if (exportTask.state === "failed" || exportTask.state === "upstream_failed") {
+        return res.status(500).json({ error: "Airflow export task failed." });
+      }
+    }
+
+    const exportXcomUrl = `${exportTaskUrl}/xcomEntries/return_value`;
     const exportXcomResponse = await fetch(exportXcomUrl, {
       headers: { Authorization: `Bearer ${token}` },
     });
